@@ -25,7 +25,26 @@ let lastTurnPopupKey = null;
 let turnPopupTimer = null;
 let localHandOrder = [];
 let handOrderSessionId = null;
+let handSortMode = 'free';
 const HAND_ORDER_KEY_PREFIX = `${GAME_ID}-hand-order`;
+const HAND_SORT_KEY_PREFIX = `${GAME_ID}-hand-sort`;
+
+function handSortStorageKey(sessionId = state?.gameSessionId || 'lobby') {
+  return `${HAND_SORT_KEY_PREFIX}:${sessionId || 'lobby'}:${myName || 'player'}`;
+}
+
+function loadStoredHandSortMode(sessionId) {
+  try {
+    const mode = localStorage.getItem(handSortStorageKey(sessionId));
+    return ['number', 'color', 'free'].includes(mode) ? mode : 'free';
+  } catch {
+    return 'free';
+  }
+}
+
+function saveStoredHandSortMode() {
+  try { localStorage.setItem(handSortStorageKey(), handSortMode); } catch {}
+}
 
 function handOrderStorageKey(sessionId = state?.gameSessionId || 'lobby') {
   return `${HAND_ORDER_KEY_PREFIX}:${sessionId || 'lobby'}:${myId || myName || 'player'}`;
@@ -388,8 +407,25 @@ function normalizeField(field) {
   return [...nonEmpty, []];
 }
 
+function applyHandSortMode(tiles) {
+  const list = [...(tiles || [])];
+  const order = { red: 0, blue: 1, yellow: 2, black: 3 };
+  if (handSortMode === 'number') {
+    list.sort((a, b) => (a.joker ? 99 : a.n) - (b.joker ? 99 : b.n) || (order[a.color] ?? 9) - (order[b.color] ?? 9));
+  } else if (handSortMode === 'color') {
+    list.sort((a, b) => (order[a.color] ?? 9) - (order[b.color] ?? 9) || (a.joker ? 99 : a.n) - (b.joker ? 99 : b.n));
+  }
+  return list;
+}
+
 function reconcileLocalHandOrder(hand) {
   const tiles = hand || [];
+  if (handSortMode === 'number' || handSortMode === 'color') {
+    const sorted = applyHandSortMode(tiles);
+    localHandOrder = sorted.map(tile => tile.id);
+    saveStoredHandOrder();
+    return sorted;
+  }
   const byId = new Map(tiles.map(tile => [tile.id, tile]));
   const nextIds = localHandOrder.filter(id => byId.has(id));
   for (const tile of tiles) if (!nextIds.includes(tile.id)) nextIds.push(tile.id);
@@ -411,6 +447,7 @@ function initDraft() {
   if (handOrderSessionId !== sessionId) {
     handOrderSessionId = sessionId;
     localHandOrder = loadStoredHandOrder(sessionId);
+    handSortMode = loadStoredHandSortMode(sessionId);
   }
   draft = {
     field: normalizeField(cloneDraft(state.field)),
@@ -448,9 +485,34 @@ function renderGame() {
     $('#playersBar').appendChild(item);
   });
   $('#poolText').textContent = `山札 ${state.poolCount}枚`;
+  renderLastTurnLog();
   renderDraft();
   updateTurnUI();
   startTimer();
+}
+
+function tileLogLabel(tile) {
+  if (!tile) return '';
+  if (tile.joker) return 'JOKER';
+  const names = { red: '赤', blue: '青', yellow: '黄', black: '黒' };
+  return `${names[tile.color] || ''}${tile.n}`;
+}
+
+function renderLastTurnLog() {
+  const el = $('#lastTurnLog');
+  if (!el) return;
+  const log = state?.lastTurnLog;
+  if (!log) { el.textContent = '前ターン：まだありません'; return; }
+  if (log.action === 'draw') {
+    el.textContent = `前ターン：${log.playerName} → 1枚引いた`;
+    return;
+  }
+  if (log.action === 'timeout') {
+    el.textContent = `前ターン：${log.playerName} → 時間切れ（${log.drawCount || 1}枚引いた）`;
+    return;
+  }
+  const labels = (log.tiles || []).map(tileLogLabel).filter(Boolean);
+  el.textContent = `前ターン：${log.playerName} → ${labels.length ? labels.join('・') : '場を組み替えた'}`;
 }
 
 function renderDraft() {
@@ -643,9 +705,9 @@ $$('[data-sort]').forEach(button => button.onclick = () => sortHand(button.datas
 
 function sortHand(mode) {
   if (!draft) return;
-  const order = { red: 0, blue: 1, yellow: 2, black: 3 };
-  if (mode === 'number') draft.hand.sort((a, b) => (a.joker ? 99 : a.n) - (b.joker ? 99 : b.n) || (order[a.color] ?? 9) - (order[b.color] ?? 9));
-  if (mode === 'color') draft.hand.sort((a, b) => (order[a.color] ?? 9) - (order[b.color] ?? 9) || (a.n || 99) - (b.n || 99));
+  handSortMode = ['number', 'color', 'free'].includes(mode) ? mode : 'free';
+  saveStoredHandSortMode();
+  if (handSortMode !== 'free') draft.hand = applyHandSortMode(draft.hand);
   syncLocalHandOrderFromDraft();
   renderDraft();
 }
@@ -707,15 +769,18 @@ function currentInitialScore() {
 
 function renderInitialStatus() {
   const el = $('#initialStatus');
+  const mobile = $('#mobileInitialStatus');
   if (!el) return;
   if (myInitialDone()) {
     el.textContent = '初回30点：達成済み';
     el.className = 'initial-status done';
+    if (mobile) { mobile.textContent = ''; mobile.classList.add('hidden'); }
     return;
   }
   const score = currentInitialScore();
   el.textContent = `初回30点：${score} / 30点${score >= 30 ? '（達成可能）' : ''}`;
   el.className = 'initial-status ' + (score >= 30 ? 'ready' : 'waiting');
+  if (mobile) { mobile.textContent = `${score}/30`; mobile.classList.remove('hidden'); }
 }
 
 function validatePreview() {
