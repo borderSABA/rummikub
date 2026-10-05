@@ -23,6 +23,8 @@ let actionSeq = 0;
 let commonNameSavedForSession = null;
 let lastTurnPopupKey = null;
 let turnPopupTimer = null;
+let localHandOrder = [];
+let handOrderSessionId = null;
 
 $('#nameInput').value = localStorage.getItem(COMMON_NAME_KEY) || '';
 
@@ -364,9 +366,31 @@ function normalizeField(field) {
   return [...nonEmpty, []];
 }
 
+function reconcileLocalHandOrder(hand) {
+  const tiles = hand || [];
+  const byId = new Map(tiles.map(tile => [tile.id, tile]));
+  const nextIds = localHandOrder.filter(id => byId.has(id));
+  for (const tile of tiles) if (!nextIds.includes(tile.id)) nextIds.push(tile.id);
+  localHandOrder = nextIds;
+  return nextIds.map(id => byId.get(id)).filter(Boolean);
+}
+
+function syncLocalHandOrderFromDraft() {
+  if (draft?.hand) localHandOrder = draft.hand.map(tile => tile.id);
+}
+
 function initDraft() {
   const me = state.players.find(player => player.id === myId);
-  draft = { field: normalizeField(cloneDraft(state.field)), hand: cloneDraft(me?.hand || []) };
+  const sessionId = state.gameSessionId || null;
+  if (handOrderSessionId !== sessionId) {
+    handOrderSessionId = sessionId;
+    localHandOrder = [];
+  }
+  draft = {
+    field: normalizeField(cloneDraft(state.field)),
+    hold: [],
+    hand: cloneDraft(reconcileLocalHandOrder(me?.hand || []))
+  };
   history = [cloneDraft(draft)];
   historyIndex = 0;
   selected = null;
@@ -378,8 +402,9 @@ function pushHistory() {
   history.push(cloneDraft(draft));
   historyIndex = history.length - 1;
   const originalHand = state.players.find(player => player.id === myId)?.hand || [];
+  syncLocalHandOrderFromDraft();
   send('draftDirty', {
-    dirty: JSON.stringify(draft.field.filter(set => set.length)) !== JSON.stringify(state.field) || JSON.stringify(draft.hand) !== JSON.stringify(originalHand)
+    dirty: (draft.hold?.length || 0) > 0 || JSON.stringify(draft.field.filter(set => set.length)) !== JSON.stringify(state.field) || JSON.stringify(draft.hand.map(tile => tile.id).slice().sort()) !== JSON.stringify(originalHand.map(tile => tile.id).slice().sort())
   });
 }
 
@@ -393,7 +418,7 @@ function renderGame() {
   state.players.forEach((player, index) => {
     const item = document.createElement('div');
     item.className = 'player-chip' + (index === state.turnIndex ? ' turn' : '');
-    item.innerHTML = `<div class="name">${esc(player.name)}${player.host ? ' ★' : ''}</div><div class="sub">${player.cpu ? 'CPU / ' : ''}${player.handCount}枚${player.initialDone ? ' / 30済' : ''}</div>`;
+    item.innerHTML = `<div class="name">${esc(player.name)}${player.host ? ' ★' : ''}</div><div class="sub">${player.cpu ? 'CPU / ' : ''}${player.handCount}枚${player.initialDone ? ' / 30点達成' : ' / 初回30点未達'}</div>`;
     $('#playersBar').appendChild(item);
   });
   $('#turnText').textContent = `手番: ${state.players[state.turnIndex]?.name || '-'}`;
@@ -419,10 +444,16 @@ function renderDraft() {
     setBox.onclick = event => { if (event.target === setBox && selected) moveSelectedToSet(setIndex); };
     field.appendChild(setBox);
   });
+  const hold = $('#hold');
+  hold.innerHTML = '';
+  (draft.hold || []).forEach((tile, holdIndex) => hold.appendChild(tileEl(tile, { zone: 'hold', hi: holdIndex })));
+  hold.classList.toggle('has-tiles', (draft.hold || []).length > 0);
+
   const hand = $('#hand');
   hand.innerHTML = '';
   draft.hand.forEach((tile, handIndex) => hand.appendChild(tileEl(tile, { zone: 'hand', hi: handIndex })));
   $('#handCount').textContent = `${draft.hand.length}枚`;
+  renderInitialStatus();
   validatePreview();
 }
 
@@ -432,10 +463,40 @@ function tileEl(tile, position) {
   item.draggable = true;
   if (tile.joker) item.innerHTML = '<span class="joker-mark">★</span><span class="joker-word">JOKER</span>';
   else item.textContent = tile.n;
-  item.onclick = event => { event.stopPropagation(); selectTile(position); };
-  item.ondragstart = () => { selected = position; };
-  item.ondblclick = event => { event.stopPropagation(); if (position.zone === 'field') moveSelectedToHand(position); };
+  const lockedInitialField = position.zone === 'field' && !myInitialDone() && isOriginalFieldTile(tile.id);
+  if (lockedInitialField) item.classList.add('locked');
+  item.onclick = event => { event.stopPropagation(); if (!lockedInitialField) selectTile(position); };
+  item.ondragstart = event => {
+    if (lockedInitialField) { event.preventDefault(); return; }
+    selected = position;
+  };
+  item.ondblclick = event => {
+    event.stopPropagation();
+    if (position.zone === 'field') {
+      if (isOriginalFieldTile(tile.id)) moveSelectedToHold(position);
+      else moveSelectedToHand(position);
+    }
+  };
   return item;
+}
+
+function myInitialDone() {
+  return !!state?.players?.find(player => player.id === myId)?.initialDone;
+}
+
+function originalFieldIdSet() {
+  return new Set((state?.field || []).flat().map(tile => tile.id));
+}
+
+function isOriginalFieldTile(tileId) {
+  return originalFieldIdSet().has(tileId);
+}
+
+function peekSelected() {
+  if (!selected || !draft) return null;
+  if (selected.zone === 'hand') return draft.hand[selected.hi] || null;
+  if (selected.zone === 'hold') return draft.hold?.[selected.hi] || null;
+  return draft.field[selected.si]?.[selected.ti] || null;
 }
 
 function selectTile(position) {
@@ -446,15 +507,47 @@ function selectTile(position) {
 function takeSelected() {
   if (!selected) return null;
   if (selected.zone === 'hand') return draft.hand.splice(selected.hi, 1)[0];
+  if (selected.zone === 'hold') return draft.hold.splice(selected.hi, 1)[0];
   return draft.field[selected.si].splice(selected.ti, 1)[0];
 }
 
 function moveSelectedToSet(setIndex) {
   if (!isMyTurn()) return;
-  const tile = takeSelected();
+  const tile = peekSelected();
   if (!tile) return;
-  draft.field[setIndex].push(tile);
+  const initialDone = myInitialDone();
+  const target = draft.field[setIndex] || [];
+  if (!initialDone) {
+    if (isOriginalFieldTile(tile.id) || target.some(item => isOriginalFieldTile(item.id))) {
+      msg('初回30点を達成するまでは、既に場にあるセットを組み替えられません。', true);
+      return;
+    }
+  }
+  const moved = takeSelected();
+  if (!moved) return;
+  draft.field[setIndex].push(moved);
   sortSetTiles(draft.field[setIndex]);
+  draft.field = normalizeField(draft.field);
+  selected = null;
+  pushHistory();
+  renderDraft();
+}
+
+function moveSelectedToHold(position = selected) {
+  if (!isMyTurn() || !position || position.zone !== 'field') return;
+  const tile = draft.field[position.si]?.[position.ti];
+  if (!tile) return;
+  if (!myInitialDone()) {
+    msg('初回30点を達成するまでは、場のタイルを動かせません。', true);
+    return;
+  }
+  if (!isOriginalFieldTile(tile.id)) {
+    msg('保留置き場には、ターン開始時から場にあったタイルだけ置けます。', true);
+    return;
+  }
+  draft.field[position.si].splice(position.ti, 1);
+  draft.hold = draft.hold || [];
+  draft.hold.push(tile);
   draft.field = normalizeField(draft.field);
   selected = null;
   pushHistory();
@@ -463,18 +556,63 @@ function moveSelectedToSet(setIndex) {
 
 function moveSelectedToHand(position = selected) {
   if (!isMyTurn() || !position || position.zone !== 'field') return;
-  const tile = draft.field[position.si].splice(position.ti, 1)[0];
+  const tile = draft.field[position.si]?.[position.ti];
+  if (!tile) return;
+  if (isOriginalFieldTile(tile.id)) {
+    msg('場にあったタイルを手札へ戻すことはできません。保留置き場を使ってください。', true);
+    return;
+  }
+  draft.field[position.si].splice(position.ti, 1);
   draft.hand.push(tile);
+  syncLocalHandOrderFromDraft();
   draft.field = normalizeField(draft.field);
   selected = null;
   pushHistory();
   renderDraft();
 }
 
-$('#undoBtn').onclick = () => { if (historyIndex > 0) { historyIndex -= 1; draft = cloneDraft(history[historyIndex]); draft.baseVersion = state.version; selected = null; renderDraft(); } };
-$('#redoBtn').onclick = () => { if (historyIndex < history.length - 1) { historyIndex += 1; draft = cloneDraft(history[historyIndex]); draft.baseVersion = state.version; selected = null; renderDraft(); } };
+function moveSelectedToHoldArea() {
+  if (!selected || selected.zone !== 'field') {
+    if (selected?.zone === 'hand') msg('自分の手札は保留置き場へ置けません。', true);
+    return;
+  }
+  moveSelectedToHold(selected);
+}
+
+const holdZone = $('#holdZone');
+holdZone.ondragover = event => { event.preventDefault(); holdZone.classList.add('drag-over'); };
+holdZone.ondragleave = () => holdZone.classList.remove('drag-over');
+holdZone.ondrop = event => { event.preventDefault(); holdZone.classList.remove('drag-over'); moveSelectedToHoldArea(); };
+holdZone.onclick = event => { if (event.target === holdZone || event.target.id === 'hold' || event.target.classList.contains('hold-label')) moveSelectedToHoldArea(); };
+
+$('#undoBtn').onclick = () => { if (historyIndex > 0) { historyIndex -= 1; draft = cloneDraft(history[historyIndex]); draft.baseVersion = state.version; selected = null; syncLocalHandOrderFromDraft(); renderDraft(); } };
+$('#redoBtn').onclick = () => { if (historyIndex < history.length - 1) { historyIndex += 1; draft = cloneDraft(history[historyIndex]); draft.baseVersion = state.version; selected = null; syncLocalHandOrderFromDraft(); renderDraft(); } };
 $('#resetDraftBtn').onclick = () => { initDraft(); draft.baseVersion = state.version; renderDraft(); };
-$('#confirmBtn').onclick = () => { if (isMyTurn()) send('confirm', { field: draft.field.filter(set => set.length).map(set => set.map(tile => tile.id)), hand: draft.hand.map(tile => tile.id) }); };
+$('#confirmBtn').onclick = () => {
+  if (!isMyTurn()) return;
+  if ((draft.hold?.length || 0) > 0) { msg('保留置き場のタイルをすべて場へ戻してから確定してください。', true); return; }
+
+  let fieldPayload = draft.field
+    .filter(set => set.length)
+    .map(set => set.map(tile => tile.id));
+
+  // 初回30点前は、既存盤面をクライアント編集結果から再構築しない。
+  // サーバーから受信した既存盤面をそのまま固定し、今回手札から出した
+  // タイルだけで構成された新規セットを追加して送る。これにより、
+  // 新規セットへタイルを追加しただけで既存盤面の組み換えと誤判定されない。
+  if (!myInitialDone()) {
+    const currentHandIds = new Set(draft.hand.map(tile => tile.id));
+    const originalHand = state.players.find(player => player.id === myId)?.hand || [];
+    const playedIds = new Set(originalHand.map(tile => tile.id).filter(id => !currentHandIds.has(id)));
+    const newSets = draft.field
+      .filter(set => set.length > 0 && set.every(tile => playedIds.has(tile.id)))
+      .map(set => set.map(tile => tile.id));
+    const originalField = (state.field || []).map(set => set.map(tile => tile.id));
+    fieldPayload = [...originalField, ...newSets];
+  }
+
+  send('confirm', { field: fieldPayload, hand: draft.hand.map(tile => tile.id) });
+};
 $('#drawBtn').onclick = () => { if (isMyTurn()) send('draw'); };
 $$('[data-sort]').forEach(button => button.onclick = () => sortHand(button.dataset.sort));
 
@@ -483,6 +621,7 @@ function sortHand(mode) {
   const order = { red: 0, blue: 1, yellow: 2, black: 3 };
   if (mode === 'number') draft.hand.sort((a, b) => (a.joker ? 99 : a.n) - (b.joker ? 99 : b.n) || (order[a.color] ?? 9) - (order[b.color] ?? 9));
   if (mode === 'color') draft.hand.sort((a, b) => (order[a.color] ?? 9) - (order[b.color] ?? 9) || (a.n || 99) - (b.n || 99));
+  syncLocalHandOrderFromDraft();
   renderDraft();
 }
 
@@ -513,6 +652,45 @@ function validateSet(set) {
     else if (base !== candidate) return false;
   }
   return base !== null && base >= 1 && base + set.length - 1 <= 13;
+}
+
+function scoreSet(set) {
+  if (!validateSet(set)) return 0;
+  const real = set.filter(tile => !tile.joker);
+  const sameNumber = real.every(tile => tile.n === real[0].n)
+    && new Set(real.map(tile => tile.color)).size === real.length
+    && set.length <= 4;
+  if (sameNumber) return real[0].n * set.length;
+  let base = null;
+  for (let index = 0; index < set.length; index += 1) {
+    if (!set[index].joker) {
+      const candidate = set[index].n - index;
+      if (base === null) base = candidate;
+    }
+  }
+  if (base === null) return 0;
+  return set.reduce((total, tile, index) => total + (tile.joker ? base + index : tile.n), 0);
+}
+
+function currentInitialScore() {
+  if (!draft || myInitialDone()) return 30;
+  const original = originalFieldIdSet();
+  return draft.field
+    .filter(set => set.length && set.every(tile => !original.has(tile.id)) && validateSet(set))
+    .reduce((total, set) => total + scoreSet(set), 0);
+}
+
+function renderInitialStatus() {
+  const el = $('#initialStatus');
+  if (!el) return;
+  if (myInitialDone()) {
+    el.textContent = '初回30点：達成済み';
+    el.className = 'initial-status done';
+    return;
+  }
+  const score = currentInitialScore();
+  el.textContent = `初回30点：${score} / 30点${score >= 30 ? '（達成可能）' : ''}`;
+  el.className = 'initial-status ' + (score >= 30 ? 'ready' : 'waiting');
 }
 
 function validatePreview() {

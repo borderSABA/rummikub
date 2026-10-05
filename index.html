@@ -10,7 +10,7 @@
 <header id="topbar">
   <div class="top-actions"><button id="rulesBtn" class="top-btn">ルール</button><button id="termsBtn" class="top-btn">用語</button></div>
   <div class="title">RUMMIKUB ONLINE</div>
-  <div class="top-right"><button id="topLeaveBtn" class="top-btn danger-btn hidden">退出</button><div class="ver">v0.1.5</div></div>
+  <div class="top-right"><button id="topLeaveBtn" class="top-btn danger-btn hidden">退出</button><div class="ver">v0.1.7</div></div>
 </header>
 <main>
   <section id="titleScreen" class="screen active">
@@ -42,8 +42,11 @@
 
   <section id="gameScreen" class="screen game-screen">
     <div id="playersBar" class="players-bar"></div>
-    <div class="game-meta"><span id="turnText"></span><span id="timerText"></span><span id="poolText"></span></div>
-    <div id="field" class="field"></div>
+    <div class="game-meta"><span id="turnText"></span><span id="initialStatus" class="initial-status"></span><span id="timerText"></span><span id="poolText"></span></div>
+    <div class="field-stage">
+      <div id="holdZone" class="hold-zone"><span class="hold-label">保留カード置き場</span><div id="hold" class="hold"></div><span class="hold-help">場にあったタイルのみ</span></div>
+      <div id="field" class="field"></div>
+    </div>
     <div id="draftTools" class="draft-tools">
       <button id="undoBtn">↶ 戻す</button>
       <button id="redoBtn">↷ やり直す</button>
