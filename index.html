@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>RUMMIKUB ONLINE</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+<header id="topbar">
+  <div class="top-left"><a href="https://bordersaba.github.io/">HOME</a><a href="https://bordersaba.github.io/#play-records">プレイ記録</a></div>
+  <div class="title">RUMMIKUB ONLINE</div><div class="ver">v0.1.0</div>
+</header>
+<main>
+  <section id="titleScreen" class="screen active">
+    <div class="panel title-panel">
+      <label>名前 <input id="nameInput" maxlength="16" autocomplete="nickname" /></label>
+      <div id="roomGrid" class="room-grid"></div>
+      <div class="hint">空ROOMの新規作成はホスト名のみ。既存ROOMには誰でも参加できます。</div>
+    </div>
+  </section>
+
+  <section id="lobbyScreen" class="screen">
+    <div class="panel lobby-panel">
+      <div class="row spread"><h2 id="lobbyRoomTitle">ROOM</h2><button id="leaveBtn">退出</button></div>
+      <div id="lobbyPlayers" class="lobby-players"></div>
+      <div id="hostControls" class="host-controls hidden">
+        <div class="row gap">
+          <button id="addCpuBtn">CPU追加</button>
+          <select id="cpuLevel"><option value="1">CPU Lv1</option><option value="2">CPU Lv2</option><option value="3">CPU Lv3</option><option value="4">CPU Lv4</option></select>
+        </div>
+        <div class="row gap">
+          <label>制限時間
+            <select id="turnSeconds"><option value="0">なし</option><option value="30">30秒</option><option value="60" selected>60秒</option><option value="90">90秒</option><option value="120">120秒</option></select>
+          </label>
+          <button id="startBtn" class="primary">ゲーム開始</button>
+        </div>
+      </div>
+      <p id="lobbyMessage" class="message"></p>
+    </div>
+  </section>
+
+  <section id="gameScreen" class="screen game-screen">
+    <div id="playersBar" class="players-bar"></div>
+    <div class="game-meta"><span id="turnText"></span><span id="timerText"></span><span id="poolText"></span></div>
+    <div id="field" class="field"></div>
+    <div id="draftTools" class="draft-tools">
+      <button id="newSetBtn">新規セット</button>
+      <button id="deleteEmptyBtn">空枠削除</button>
+      <button id="undoBtn">↶ 戻す</button>
+      <button id="redoBtn">↷ やり直す</button>
+      <button id="resetDraftBtn">ターン開始時へ戻す</button>
+    </div>
+    <div class="hand-area">
+      <div class="hand-head"><span>自分の手札 <b id="handCount"></b></span><div class="row gap compact"><button data-sort="number">数字順</button><button data-sort="color">色順</button><button data-sort="free">自由順</button></div></div>
+      <div id="hand" class="hand"></div>
+    </div>
+    <div class="actions"><button id="drawBtn">1枚引く</button><button id="confirmBtn" class="primary">確定</button></div>
+    <p id="gameMessage" class="message"></p>
+  </section>
+
+  <section id="resultOverlay" class="result-overlay hidden">
+    <div class="result-card"><h2>RUMMIKUB!</h2><div id="resultBody"></div><button id="backLobbyBtn" class="primary">ロビーへ戻る</button></div>
+  </section>
+</main>
+<script src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,50 @@
+const SERVER_URL = localStorage.getItem('rummikub_server_url') || 'https://rummikub-online.naitoryo7110.workers.dev';
+const COMMON_NAME_KEY='bordersaba_player_name';
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const screens={title:$('#titleScreen'),lobby:$('#lobbyScreen'),game:$('#gameScreen')};
+let ws=null, roomNo=null, myName='', myId=null, state=null, draft=null, history=[], historyIndex=-1, selected=null, timerHandle=null;
+$('#nameInput').value=localStorage.getItem(COMMON_NAME_KEY)||'';
+function showScreen(n){Object.values(screens).forEach(x=>x.classList.remove('active'));screens[n].classList.add('active')}
+function msg(t,err=false){$('#gameMessage').textContent=t||'';$('#gameMessage').className='message'+(err?' error':'')}
+function lmsg(t){$('#lobbyMessage').textContent=t||''}
+async function api(path,opt){const r=await fetch(SERVER_URL+path,opt);const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);return j}
+async function refreshRooms(){try{const data=await api('/api/rooms');renderRooms(data.rooms)}catch(e){renderRooms([1,2,3,4].map(n=>({room:n,count:0,names:[],status:'取得失敗'})));}}
+function renderRooms(rooms){const g=$('#roomGrid');g.innerHTML='';rooms.forEach(r=>{const d=document.createElement('div');d.className='room-card';d.innerHTML=`<h3>ROOM${r.room}</h3><div class="room-state">${r.count}/4 ・ ${r.status||'待機中'}</div><div class="room-names">${(r.names||[]).join(' / ')||'参加者なし'}</div><div class="row gap"><button class="join">参加</button><button class="reset">初期化</button></div>`;d.querySelector('.join').onclick=()=>joinRoom(r.room);d.querySelector('.reset').onclick=()=>resetRoom(r.room);g.appendChild(d)})}
+async function resetRoom(n){const name=$('#nameInput').value.trim();if(!name)return alert('名前を入力してください。');try{await api(`/api/room/${n}/reset`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name})});refreshRooms()}catch(e){alert(e.message)}}
+function joinRoom(n){const name=$('#nameInput').value.trim();if(!name)return alert('名前を入力してください。');myName=name;roomNo=n;openWS()}
+function openWS(){if(ws)try{ws.close()}catch{};const u=SERVER_URL.replace(/^http/,'ws')+`/api/room/${roomNo}/ws?name=${encodeURIComponent(myName)}`;ws=new WebSocket(u);ws.onopen=()=>{};ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.type==='error'){alert(m.error);return}if(m.type==='welcome'){myId=m.playerId}if(m.type==='state'){state=m.state;renderState()}};ws.onclose=()=>{if(screens.game.classList.contains('active')||screens.lobby.classList.contains('active'))lmsg('接続が切れました。')}}
+function send(type,data={}){if(ws?.readyState===1)ws.send(JSON.stringify({type,...data}))}
+function renderState(){if(!state)return; if(state.phase==='lobby')renderLobby(); else {renderGame(); if(state.phase==='result')renderResult();}}
+function renderLobby(){showScreen('lobby');$('#lobbyRoomTitle').textContent=`ROOM${roomNo}`;const box=$('#lobbyPlayers');box.innerHTML='';state.players.forEach((p,i)=>{const d=document.createElement('div');d.className='player-slot'+(p.host?' host':'');d.innerHTML=`<b>${esc(p.name)}</b>${p.host?'<span class="host-badge">HOST</span>':''}<div>${p.cpu?`CPU Lv${p.cpuLevel}`:'PLAYER'}</div>`;box.appendChild(d)});const me=state.players.find(p=>p.id===myId);$('#hostControls').classList.toggle('hidden',!me?.host);$('#turnSeconds').value=state.settings.turnSeconds;$('#cpuLevel').value=state.settings.cpuLevel||2;lmsg(state.players.length<2?'2人以上で開始できます。':'')}
+$('#leaveBtn').onclick=()=>{send('leave');ws?.close();ws=null;state=null;showScreen('title');refreshRooms()};
+$('#addCpuBtn').onclick=()=>send('addCpu',{level:+$('#cpuLevel').value});
+$('#turnSeconds').onchange=()=>send('settings',{turnSeconds:+$('#turnSeconds').value});
+$('#startBtn').onclick=()=>send('start');
+function cloneDraft(d){return JSON.parse(JSON.stringify(d))}
+function initDraft(){const me=state.players.find(p=>p.id===myId);draft={field:cloneDraft(state.field),hand:cloneDraft(me?.hand||[])};history=[cloneDraft(draft)];historyIndex=0;selected=null;send('draftDirty',{dirty:false})}
+function pushHistory(){history=history.slice(0,historyIndex+1);history.push(cloneDraft(draft));historyIndex=history.length-1;send('draftDirty',{dirty:JSON.stringify(draft.field)!==JSON.stringify(state.field) || JSON.stringify(draft.hand)!==JSON.stringify((state.players.find(p=>p.id===myId)?.hand)||[])})}
+function renderGame(){showScreen('game');const me=state.players.find(p=>p.id===myId);if(!draft || draft.baseVersion!==state.version){initDraft();draft.baseVersion=state.version}$('#playersBar').innerHTML='';state.players.forEach((p,i)=>{const d=document.createElement('div');d.className='player-chip'+(i===state.turnIndex?' turn':'');d.innerHTML=`<div class="name">${esc(p.name)}${p.host?' ★':''}</div><div class="sub">${p.cpu?'CPU / ':''}${p.handCount}枚${p.initialDone?' / 30済':''}</div>`;$('#playersBar').appendChild(d)});$('#turnText').textContent=`手番: ${state.players[state.turnIndex]?.name||'-'}`;$('#poolText').textContent=`山札 ${state.poolCount}枚`;renderDraft();updateTurnUI();startTimer()}
+function renderDraft(){if(!draft)return;const field=$('#field');field.innerHTML='';draft.field.forEach((set,si)=>{const s=document.createElement('div');s.className='set-box';s.dataset.si=si;s.ondragover=e=>{e.preventDefault();s.classList.add('drag-over')};s.ondragleave=()=>s.classList.remove('drag-over');s.ondrop=e=>{e.preventDefault();s.classList.remove('drag-over');moveSelectedToSet(si)};set.forEach((t,ti)=>s.appendChild(tileEl(t,{zone:'field',si,ti})));s.onclick=e=>{if(e.target===s&&selected)moveSelectedToSet(si)};field.appendChild(s)});const hand=$('#hand');hand.innerHTML='';draft.hand.forEach((t,hi)=>hand.appendChild(tileEl(t,{zone:'hand',hi})));$('#handCount').textContent=`${draft.hand.length}枚`;validatePreview()}
+function tileEl(t,pos){const d=document.createElement('div');d.className=`tile ${t.joker?'joker':t.color}`+(selected&&selected.zone===pos.zone&&selected.si===pos.si&&selected.ti===pos.ti&&selected.hi===pos.hi?' selected':'');d.draggable=true;d.textContent=t.joker?'JOKER':t.n;d.onclick=e=>{e.stopPropagation();selectTile(pos)};d.ondragstart=()=>{selected=pos};d.ondblclick=e=>{e.stopPropagation(); if(pos.zone==='field')moveSelectedToHand(pos)};return d}
+function selectTile(pos){selected=JSON.parse(JSON.stringify(pos));renderDraft()}
+function takeSelected(){if(!selected)return null;let t;if(selected.zone==='hand')t=draft.hand.splice(selected.hi,1)[0];else t=draft.field[selected.si].splice(selected.ti,1)[0];return t}
+function moveSelectedToSet(si){if(!isMyTurn())return;const t=takeSelected();if(!t)return;draft.field[si].push(t);selected=null;pushHistory();renderDraft()}
+function moveSelectedToHand(pos=selected){if(!isMyTurn()||!pos||pos.zone!=='field')return;const t=draft.field[pos.si].splice(pos.ti,1)[0];draft.hand.push(t);selected=null;pushHistory();renderDraft()}
+$('#newSetBtn').onclick=()=>{if(!isMyTurn())return;if(selected){const t=takeSelected();draft.field.push([t]);selected=null}else draft.field.push([]);pushHistory();renderDraft()};
+$('#deleteEmptyBtn').onclick=()=>{draft.field=draft.field.filter(s=>s.length);pushHistory();renderDraft()};
+$('#undoBtn').onclick=()=>{if(historyIndex>0){historyIndex--;draft=cloneDraft(history[historyIndex]);draft.baseVersion=state.version;selected=null;renderDraft()}};
+$('#redoBtn').onclick=()=>{if(historyIndex<history.length-1){historyIndex++;draft=cloneDraft(history[historyIndex]);draft.baseVersion=state.version;selected=null;renderDraft()}};
+$('#resetDraftBtn').onclick=()=>{initDraft();draft.baseVersion=state.version;renderDraft()};
+$('#confirmBtn').onclick=()=>{if(!isMyTurn())return;send('confirm',{field:draft.field.map(s=>s.map(t=>t.id)),hand:draft.hand.map(t=>t.id)})};
+$('#drawBtn').onclick=()=>{if(!isMyTurn())return;send('draw')};
+$$('[data-sort]').forEach(b=>b.onclick=()=>sortHand(b.dataset.sort));
+function sortHand(mode){if(!draft)return;const order={red:0,blue:1,yellow:2,black:3};if(mode==='number')draft.hand.sort((a,b)=>(a.joker?99:a.n)-(b.joker?99:b.n)||(order[a.color]??9)-(order[b.color]??9));if(mode==='color')draft.hand.sort((a,b)=>(order[a.color]??9)-(order[b.color]??9)||(a.n||99)-(b.n||99));renderDraft()}
+function isMyTurn(){return state?.phase==='game'&&state.players[state.turnIndex]?.id===myId}
+function updateTurnUI(){const mine=isMyTurn();['newSetBtn','deleteEmptyBtn','undoBtn','redoBtn','resetDraftBtn','confirmBtn','drawBtn'].forEach(id=>$('#'+id).disabled=!mine)}
+function validateSet(set){if(set.length<3)return false;const real=set.filter(t=>!t.joker);if(!real.length)return false;const sameN=real.every(t=>t.n===real[0].n);const distinctColors=new Set(real.map(t=>t.color)).size===real.length;if(sameN&&distinctColors&&set.length<=4)return true;const sameC=real.every(t=>t.color===real[0].color);if(!sameC)return false;let base=null;for(let i=0;i<set.length;i++){const t=set[i];if(t.joker)continue;const b=t.n-i;if(base===null)base=b;else if(base!==b)return false}return base!==null&&base>=1&&base+set.length-1<=13}
+function validatePreview(){if(!draft)return;[...$('#field').children].forEach((el,i)=>el.classList.toggle('invalid',draft.field[i].length>0&&!validateSet(draft.field[i])))}
+function startTimer(){clearInterval(timerHandle);const tick=()=>{if(!state?.deadline){$('#timerText').textContent='制限なし';return}const s=Math.max(0,Math.ceil((state.deadline-Date.now())/1000));$('#timerText').textContent=`残り ${s}秒`};tick();timerHandle=setInterval(tick,500)}
+function renderResult(){const o=$('#resultOverlay');o.classList.remove('hidden');$('#resultBody').innerHTML=(state.result?.scores||[]).map(s=>`<div class="score-row"><b>${esc(s.name)}</b><span>${s.score>0?'+':''}${s.score}</span></div>`).join('')}
+$('#backLobbyBtn').onclick=()=>{send('backLobby');$('#resultOverlay').classList.add('hidden')};
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+window.addEventListener('beforeunload',()=>{try{ws?.close()}catch{}});refreshRooms();
