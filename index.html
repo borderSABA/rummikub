@@ -8,20 +8,21 @@
 </head>
 <body>
 <header id="topbar">
-  <div></div><div class="title">RUMMIKUB ONLINE</div><div class="ver">v0.1.2</div>
+  <div class="top-actions"><button id="rulesBtn" class="top-btn">ルール</button><button id="termsBtn" class="top-btn">用語</button></div>
+  <div class="title">RUMMIKUB ONLINE</div>
+  <div class="top-right"><button id="topLeaveBtn" class="top-btn danger-btn hidden">退出</button><div class="ver">v0.1.5</div></div>
 </header>
 <main>
   <section id="titleScreen" class="screen active">
     <div class="panel title-panel">
       <label>名前 <input id="nameInput" maxlength="16" autocomplete="nickname" /></label>
       <div id="roomGrid" class="room-grid"></div>
-      <div class="hint">空ROOMの新規作成にはホスト権限が必要です。既存ROOMには誰でも参加できます。</div>
     </div>
   </section>
 
   <section id="lobbyScreen" class="screen">
     <div class="panel lobby-panel">
-      <div class="row spread"><h2 id="lobbyRoomTitle">ROOM</h2><button id="leaveBtn">退出</button></div>
+      <div class="row spread"><h2 id="lobbyRoomTitle">ROOM</h2></div>
       <div id="lobbyPlayers" class="lobby-players"></div>
       <div id="hostControls" class="host-controls hidden">
         <div class="row gap">
@@ -44,8 +45,6 @@
     <div class="game-meta"><span id="turnText"></span><span id="timerText"></span><span id="poolText"></span></div>
     <div id="field" class="field"></div>
     <div id="draftTools" class="draft-tools">
-      <button id="newSetBtn">新規セット</button>
-      <button id="deleteEmptyBtn">空枠削除</button>
       <button id="undoBtn">↶ 戻す</button>
       <button id="redoBtn">↷ やり直す</button>
       <button id="resetDraftBtn">ターン開始時へ戻す</button>
@@ -58,8 +57,20 @@
     <p id="gameMessage" class="message"></p>
   </section>
 
+
+  <div id="turnPopup" class="turn-popup hidden" role="status" aria-live="polite">
+    <div id="turnPopupText" class="turn-popup-text"></div>
+  </div>
+
   <section id="resultOverlay" class="result-overlay hidden">
     <div class="result-card"><h2>RUMMIKUB!</h2><div id="resultBody"></div><button id="backLobbyBtn" class="primary">ロビーへ戻る</button></div>
+  </section>
+
+  <section id="infoOverlay" class="info-overlay hidden" aria-modal="true" role="dialog">
+    <div class="info-card">
+      <div class="info-head"><h2 id="infoTitle"></h2><button id="infoCloseBtn" class="icon-btn" aria-label="閉じる">×</button></div>
+      <div id="infoBody" class="info-body"></div>
+    </div>
   </section>
 </main>
 <script src="./app.js"></script>
