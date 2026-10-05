@@ -25,11 +25,32 @@ let lastTurnPopupKey = null;
 let turnPopupTimer = null;
 let localHandOrder = [];
 let handOrderSessionId = null;
+const HAND_ORDER_KEY_PREFIX = `${GAME_ID}-hand-order`;
+
+function handOrderStorageKey(sessionId = state?.gameSessionId || 'lobby') {
+  return `${HAND_ORDER_KEY_PREFIX}:${sessionId || 'lobby'}:${myId || myName || 'player'}`;
+}
+
+function loadStoredHandOrder(sessionId) {
+  try {
+    const value = JSON.parse(localStorage.getItem(handOrderStorageKey(sessionId)) || '[]');
+    return Array.isArray(value) ? value.filter(id => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveStoredHandOrder() {
+  try {
+    localStorage.setItem(handOrderStorageKey(), JSON.stringify(localHandOrder));
+  } catch {}
+}
 
 $('#nameInput').value = localStorage.getItem(COMMON_NAME_KEY) || '';
 
 const RULES_HTML = `
   <h3>目的</h3><p>手札のタイルをすべて場へ出したプレイヤーが勝ちです。</p>
+  <h3>使用タイル</h3><p>数字タイルは1～13を赤・青・黄・黒の4色、それぞれ2組ずつ使用します。数字タイル104枚にジョーカー2枚を加えた、合計106枚です。ゲーム開始時に各プレイヤーへ14枚ずつ配ります。</p>
   <h3>セット</h3><p><b>ラン</b>：同じ色の連続した数字を3枚以上。<br><b>グループ</b>：同じ数字を異なる色で3～4枚。</p>
   <h3>初回30点</h3><p>最初に場へ出すときは、自分の手札だけで合計30点以上必要です。達成するまでは場のタイルを組み替えられません。</p>
   <h3>手番</h3><p>タイルを場へ出して「確定」、または「1枚引く」で手番終了です。30点達成後は場のセットを自由に組み替えられますが、確定時に全セットが合法である必要があります。</p>
@@ -61,6 +82,7 @@ function showScreen(name) {
   Object.values(screens).forEach(screen => screen.classList.remove('active'));
   screens[name].classList.add('active');
   $('#topLeaveBtn').classList.toggle('hidden', name === 'title');
+  if (name !== 'game') $('#topTimer').textContent = '';
 }
 
 
@@ -372,11 +394,15 @@ function reconcileLocalHandOrder(hand) {
   const nextIds = localHandOrder.filter(id => byId.has(id));
   for (const tile of tiles) if (!nextIds.includes(tile.id)) nextIds.push(tile.id);
   localHandOrder = nextIds;
+  saveStoredHandOrder();
   return nextIds.map(id => byId.get(id)).filter(Boolean);
 }
 
 function syncLocalHandOrderFromDraft() {
-  if (draft?.hand) localHandOrder = draft.hand.map(tile => tile.id);
+  if (draft?.hand) {
+    localHandOrder = draft.hand.map(tile => tile.id);
+    saveStoredHandOrder();
+  }
 }
 
 function initDraft() {
@@ -384,7 +410,7 @@ function initDraft() {
   const sessionId = state.gameSessionId || null;
   if (handOrderSessionId !== sessionId) {
     handOrderSessionId = sessionId;
-    localHandOrder = [];
+    localHandOrder = loadStoredHandOrder(sessionId);
   }
   draft = {
     field: normalizeField(cloneDraft(state.field)),
@@ -421,7 +447,6 @@ function renderGame() {
     item.innerHTML = `<div class="name">${esc(player.name)}${player.host ? ' ★' : ''}</div><div class="sub">${player.cpu ? 'CPU / ' : ''}${player.handCount}枚${player.initialDone ? ' / 30点達成' : ' / 初回30点未達'}</div>`;
     $('#playersBar').appendChild(item);
   });
-  $('#turnText').textContent = `手番: ${state.players[state.turnIndex]?.name || '-'}`;
   $('#poolText').textContent = `山札 ${state.poolCount}枚`;
   renderDraft();
   updateTurnUI();
@@ -431,7 +456,7 @@ function renderGame() {
 function renderDraft() {
   if (!draft) return;
   draft.field = normalizeField(draft.field);
-  const field = $('#field');
+  const field = $('#setsArea');
   field.innerHTML = '';
   draft.field.forEach((set, setIndex) => {
     const setBox = document.createElement('div');
@@ -583,7 +608,7 @@ const holdZone = $('#holdZone');
 holdZone.ondragover = event => { event.preventDefault(); holdZone.classList.add('drag-over'); };
 holdZone.ondragleave = () => holdZone.classList.remove('drag-over');
 holdZone.ondrop = event => { event.preventDefault(); holdZone.classList.remove('drag-over'); moveSelectedToHoldArea(); };
-holdZone.onclick = event => { if (event.target === holdZone || event.target.id === 'hold' || event.target.classList.contains('hold-label')) moveSelectedToHoldArea(); };
+holdZone.onclick = event => { if (event.target === holdZone || event.target.id === 'hold') moveSelectedToHoldArea(); };
 
 $('#undoBtn').onclick = () => { if (historyIndex > 0) { historyIndex -= 1; draft = cloneDraft(history[historyIndex]); draft.baseVersion = state.version; selected = null; syncLocalHandOrderFromDraft(); renderDraft(); } };
 $('#redoBtn').onclick = () => { if (historyIndex < history.length - 1) { historyIndex += 1; draft = cloneDraft(history[historyIndex]); draft.baseVersion = state.version; selected = null; syncLocalHandOrderFromDraft(); renderDraft(); } };
@@ -695,7 +720,7 @@ function renderInitialStatus() {
 
 function validatePreview() {
   if (!draft) return;
-  [...$('#field').children].forEach((element, index) => {
+  [...$('#setsArea').children].forEach((element, index) => {
     const set = draft.field[index];
     element.classList.toggle('empty', set.length === 0);
     element.classList.toggle('valid', set.length > 0 && validateSet(set));
@@ -706,9 +731,11 @@ function validatePreview() {
 function startTimer() {
   clearInterval(timerHandle);
   const tick = () => {
-    if (!state?.deadline) { $('#timerText').textContent = '制限なし'; return; }
+    const el = $('#topTimer');
+    if (!el) return;
+    if (!state?.deadline) { el.textContent = ''; return; }
     const seconds = Math.max(0, Math.ceil((state.deadline - Date.now()) / 1000));
-    $('#timerText').textContent = `残り ${seconds}秒`;
+    el.textContent = `残り ${seconds}秒`;
   };
   tick();
   timerHandle = setInterval(tick, 500);

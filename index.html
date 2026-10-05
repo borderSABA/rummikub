@@ -9,8 +9,8 @@
 <body>
 <header id="topbar">
   <div class="top-actions"><button id="rulesBtn" class="top-btn">ルール</button><button id="termsBtn" class="top-btn">用語</button></div>
-  <div class="title">RUMMIKUB ONLINE</div>
-  <div class="top-right"><button id="topLeaveBtn" class="top-btn danger-btn hidden">退出</button><div class="ver">v0.1.7</div></div>
+  <div id="topTimer" class="top-timer"></div>
+  <div class="top-right"><button id="topLeaveBtn" class="top-btn danger-btn hidden">退出</button><div class="ver">v0.1.9</div></div>
 </header>
 <main>
   <section id="titleScreen" class="screen active">
@@ -42,21 +42,24 @@
 
   <section id="gameScreen" class="screen game-screen">
     <div id="playersBar" class="players-bar"></div>
-    <div class="game-meta"><span id="turnText"></span><span id="initialStatus" class="initial-status"></span><span id="timerText"></span><span id="poolText"></span></div>
-    <div class="field-stage">
-      <div id="holdZone" class="hold-zone"><span class="hold-label">保留カード置き場</span><div id="hold" class="hold"></div><span class="hold-help">場にあったタイルのみ</span></div>
-      <div id="field" class="field"></div>
+    <div id="field" class="field">
+      <div id="setsArea" class="sets-area"></div>
+      <div id="holdZone" class="hold-zone" aria-label="保留"><div id="hold" class="hold"></div></div>
     </div>
     <div id="draftTools" class="draft-tools">
+      <span id="initialStatus" class="initial-status"></span>
       <button id="undoBtn">↶ 戻す</button>
       <button id="redoBtn">↷ やり直す</button>
       <button id="resetDraftBtn">ターン開始時へ戻す</button>
+      <span class="tool-spacer"></span>
+      <span id="poolText" class="pool-text"></span>
+      <button id="drawBtn">1枚引く</button>
+      <button id="confirmBtn" class="primary">確定</button>
     </div>
     <div class="hand-area">
       <div class="hand-head"><span>自分の手札 <b id="handCount"></b></span><div class="row gap compact"><button data-sort="number">数字順</button><button data-sort="color">色順</button><button data-sort="free">自由順</button></div></div>
       <div id="hand" class="hand"></div>
     </div>
-    <div class="actions"><button id="drawBtn">1枚引く</button><button id="confirmBtn" class="primary">確定</button></div>
     <p id="gameMessage" class="message"></p>
   </section>
 
