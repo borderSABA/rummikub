@@ -8,9 +8,9 @@
 </head>
 <body>
 <header id="topbar">
-  <div class="top-actions"><button id="rulesBtn" class="top-btn">ルール</button><button id="termsBtn" class="top-btn">用語</button></div>
+  <div class="top-actions"><button id="rulesBtn" class="top-btn">ルール</button><button id="termsBtn" class="top-btn">用語</button><button id="logBtn" class="top-btn">ログ</button></div>
   <div class="top-center"><span id="mobileInitialStatus" class="mobile-initial-status hidden"></span><div id="topTimer" class="top-timer"></div></div>
-  <div class="top-right"><button id="topLeaveBtn" class="top-btn danger-btn hidden">退出</button><div class="ver">v0.2.0</div></div>
+  <div class="top-right"><span id="mobilePoolText" class="mobile-pool-text"></span><button id="topLeaveBtn" class="top-btn danger-btn hidden">退出</button><div class="ver">v0.2.2</div></div>
 </header>
 <main>
   <section id="titleScreen" class="screen active">
@@ -42,7 +42,6 @@
 
   <section id="gameScreen" class="screen game-screen">
     <div id="playersBar" class="players-bar"></div>
-    <div id="lastTurnLog" class="last-turn-log">前ターン：まだありません</div>
     <div id="field" class="field">
       <div id="setsArea" class="sets-area"></div>
       <div id="holdZone" class="hold-zone" aria-label="保留"><div id="hold" class="hold"></div></div>
@@ -51,7 +50,7 @@
       <span id="initialStatus" class="initial-status"></span>
       <button id="undoBtn">↶ 戻す</button>
       <button id="redoBtn">↷ やり直す</button>
-      <button id="resetDraftBtn">ターン開始時へ戻す</button>
+      <button id="resetDraftBtn">リセット</button>
       <span class="tool-spacer"></span>
       <span id="poolText" class="pool-text"></span>
       <button id="drawBtn">1枚引く</button>
@@ -68,6 +67,12 @@
   <div id="turnPopup" class="turn-popup hidden" role="status" aria-live="polite">
     <div id="turnPopupText" class="turn-popup-text"></div>
   </div>
+
+
+  <aside id="logPanel" class="log-panel hidden" aria-label="ログ">
+    <div class="log-panel-head"><h2>ログ</h2><button id="logCloseBtn" class="icon-btn" aria-label="閉じる">×</button></div>
+    <div id="logList" class="log-list"></div>
+  </aside>
 
   <section id="resultOverlay" class="result-overlay hidden">
     <div class="result-card"><h2>RUMMIKUB!</h2><div id="resultBody"></div><button id="backLobbyBtn" class="primary">ロビーへ戻る</button></div>

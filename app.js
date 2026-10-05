@@ -93,6 +93,8 @@ function openInfo(title, html) {
 function closeInfo() { $('#infoOverlay').classList.add('hidden'); }
 $('#rulesBtn').onclick = () => openInfo('ルール', RULES_HTML);
 $('#termsBtn').onclick = () => openInfo('用語', TERMS_HTML);
+$('#logBtn').onclick = () => { renderTurnLogs(); $('#logPanel').classList.remove('hidden'); };
+$('#logCloseBtn').onclick = () => $('#logPanel').classList.add('hidden');
 $('#infoCloseBtn').onclick = closeInfo;
 $('#infoOverlay').onclick = event => { if (event.target === $('#infoOverlay')) closeInfo(); };
 document.addEventListener('keydown', event => { if (event.key === 'Escape') closeInfo(); });
@@ -485,7 +487,9 @@ function renderGame() {
     $('#playersBar').appendChild(item);
   });
   $('#poolText').textContent = `山札 ${state.poolCount}枚`;
-  renderLastTurnLog();
+  const mobilePool = $('#mobilePoolText');
+  if (mobilePool) mobilePool.textContent = `山札 ${state.poolCount}枚`;
+  renderTurnLogs();
   renderDraft();
   updateTurnUI();
   startTimer();
@@ -498,21 +502,32 @@ function tileLogLabel(tile) {
   return `${names[tile.color] || ''}${tile.n}`;
 }
 
-function renderLastTurnLog() {
-  const el = $('#lastTurnLog');
-  if (!el) return;
-  const log = state?.lastTurnLog;
-  if (!log) { el.textContent = '前ターン：まだありません'; return; }
-  if (log.action === 'draw') {
-    el.textContent = `前ターン：${log.playerName} → 1枚引いた`;
-    return;
-  }
-  if (log.action === 'timeout') {
-    el.textContent = `前ターン：${log.playerName} → 時間切れ（${log.drawCount || 1}枚引いた）`;
-    return;
-  }
+function turnLogText(log) {
+  if (!log) return '';
+  if (log.action === 'draw') return '1枚引いた';
+  if (log.action === 'timeout') return `時間切れ（${log.drawCount || 1}枚引いた）`;
   const labels = (log.tiles || []).map(tileLogLabel).filter(Boolean);
-  el.textContent = `前ターン：${log.playerName} → ${labels.length ? labels.join('・') : '場を組み替えた'}`;
+  return labels.length ? labels.join('・') : '場を組み替えた';
+}
+
+function renderTurnLogs() {
+  const list = $('#logList');
+  if (!list) return;
+  const logs = Array.isArray(state?.turnLogs) && state.turnLogs.length
+    ? state.turnLogs
+    : (state?.lastTurnLog ? [state.lastTurnLog] : []);
+  if (!logs.length) {
+    list.innerHTML = '<div class="log-empty">まだログはありません</div>';
+    return;
+  }
+  list.innerHTML = '';
+  [...logs].reverse().forEach(log => {
+    const row = document.createElement('div');
+    row.className = 'log-entry';
+    const when = log.at ? new Date(log.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    row.innerHTML = `<span class="log-player">${esc(log.playerName || '')}</span>${when ? `<span class="log-time">${esc(when)}</span>` : ''}<div>${esc(turnLogText(log))}</div>`;
+    list.appendChild(row);
+  });
 }
 
 function renderDraft() {
@@ -544,6 +559,85 @@ function renderDraft() {
   validatePreview();
 }
 
+let longPressTimer = null;
+let longPressActive = false;
+let longPressPointerId = null;
+let longPressSourceEl = null;
+let longPressDropTarget = null;
+let suppressTileClickUntil = 0;
+
+function clearLongPressDragVisuals() {
+  document.querySelectorAll('.longpress-over').forEach(el => el.classList.remove('longpress-over'));
+  if (longPressSourceEl) longPressSourceEl.classList.remove('longpress-dragging');
+  longPressDropTarget = null;
+}
+
+function longPressTargetAt(x, y) {
+  const el = document.elementFromPoint(x, y);
+  if (!el) return null;
+  return el.closest('.set-box, #holdZone, #hand');
+}
+
+function finishLongPressDrop(target) {
+  if (!selected || !target) return;
+  if (target.classList.contains('set-box')) {
+    const setIndex = Number(target.dataset.si);
+    if (Number.isInteger(setIndex)) moveSelectedToSet(setIndex);
+    return;
+  }
+  if (target.id === 'holdZone') {
+    moveSelectedToHoldArea();
+    return;
+  }
+  if (target.id === 'hand') {
+    if (selected.zone === 'field') moveSelectedToHand(selected);
+  }
+}
+
+function bindLongPressMove(item, position, lockedInitialField) {
+  item.addEventListener('pointerdown', event => {
+    if (event.pointerType === 'mouse' || lockedInitialField || !isMyTurn()) return;
+    clearTimeout(longPressTimer);
+    longPressActive = false;
+    longPressPointerId = event.pointerId;
+    longPressSourceEl = item;
+    longPressTimer = setTimeout(() => {
+      longPressActive = true;
+      selected = JSON.parse(JSON.stringify(position));
+      suppressTileClickUntil = Date.now() + 650;
+      item.classList.add('longpress-dragging');
+      try { item.setPointerCapture(event.pointerId); } catch {}
+      if (navigator.vibrate) navigator.vibrate(18);
+    }, 400);
+  }, { passive: true });
+
+  item.addEventListener('pointermove', event => {
+    if (!longPressActive || event.pointerId !== longPressPointerId) return;
+    event.preventDefault();
+    const target = longPressTargetAt(event.clientX, event.clientY);
+    if (target !== longPressDropTarget) {
+      document.querySelectorAll('.longpress-over').forEach(el => el.classList.remove('longpress-over'));
+      longPressDropTarget = target;
+      if (longPressDropTarget) longPressDropTarget.classList.add('longpress-over');
+    }
+  }, { passive: false });
+
+  const finish = event => {
+    clearTimeout(longPressTimer);
+    if (longPressActive && event.pointerId === longPressPointerId) {
+      event.preventDefault();
+      const target = longPressDropTarget || longPressTargetAt(event.clientX, event.clientY);
+      finishLongPressDrop(target);
+      suppressTileClickUntil = Date.now() + 650;
+    }
+    longPressActive = false;
+    longPressPointerId = null;
+    clearLongPressDragVisuals();
+  };
+  item.addEventListener('pointerup', finish, { passive: false });
+  item.addEventListener('pointercancel', finish, { passive: false });
+}
+
 function tileEl(tile, position) {
   const item = document.createElement('div');
   item.className = `tile ${tile.joker ? 'joker' : tile.color}` + (selected && selected.zone === position.zone && selected.si === position.si && selected.ti === position.ti && selected.hi === position.hi ? ' selected' : '');
@@ -552,11 +646,12 @@ function tileEl(tile, position) {
   else item.textContent = tile.n;
   const lockedInitialField = position.zone === 'field' && !myInitialDone() && isOriginalFieldTile(tile.id);
   if (lockedInitialField) item.classList.add('locked');
-  item.onclick = event => { event.stopPropagation(); if (!lockedInitialField) selectTile(position); };
+  item.onclick = event => { event.stopPropagation(); if (Date.now() < suppressTileClickUntil) return; if (!lockedInitialField) selectTile(position); };
   item.ondragstart = event => {
     if (lockedInitialField) { event.preventDefault(); return; }
     selected = position;
   };
+  bindLongPressMove(item, position, lockedInitialField);
   item.ondblclick = event => {
     event.stopPropagation();
     if (position.zone === 'field') {
