@@ -474,6 +474,7 @@ function pushHistory() {
 }
 
 function renderGame() {
+  confirmPending = false;
   showScreen('game');
   if (!draft || draft.baseVersion !== state.version) {
     initDraft();
@@ -565,11 +566,31 @@ let longPressPointerId = null;
 let longPressSourceEl = null;
 let longPressDropTarget = null;
 let suppressTileClickUntil = 0;
+let longPressGhost = null;
+let confirmPending = false;
 
 function clearLongPressDragVisuals() {
   document.querySelectorAll('.longpress-over').forEach(el => el.classList.remove('longpress-over'));
   if (longPressSourceEl) longPressSourceEl.classList.remove('longpress-dragging');
+  if (longPressGhost) longPressGhost.remove();
+  longPressGhost = null;
   longPressDropTarget = null;
+}
+
+function createFloatingTileGhost(source, x, y) {
+  if (longPressGhost) longPressGhost.remove();
+  const ghost = source.cloneNode(true);
+  ghost.classList.remove('selected', 'locked', 'longpress-dragging');
+  ghost.classList.add('tile-drag-ghost');
+  document.body.appendChild(ghost);
+  longPressGhost = ghost;
+  moveFloatingTileGhost(x, y);
+}
+
+function moveFloatingTileGhost(x, y) {
+  if (!longPressGhost) return;
+  longPressGhost.style.left = `${x}px`;
+  longPressGhost.style.top = `${y}px`;
 }
 
 function longPressTargetAt(x, y) {
@@ -606,6 +627,7 @@ function bindLongPressMove(item, position, lockedInitialField) {
       selected = JSON.parse(JSON.stringify(position));
       suppressTileClickUntil = Date.now() + 650;
       item.classList.add('longpress-dragging');
+      createFloatingTileGhost(item, event.clientX, event.clientY);
       try { item.setPointerCapture(event.pointerId); } catch {}
       if (navigator.vibrate) navigator.vibrate(18);
     }, 400);
@@ -614,6 +636,7 @@ function bindLongPressMove(item, position, lockedInitialField) {
   item.addEventListener('pointermove', event => {
     if (!longPressActive || event.pointerId !== longPressPointerId) return;
     event.preventDefault();
+    moveFloatingTileGhost(event.clientX, event.clientY);
     const target = longPressTargetAt(event.clientX, event.clientY);
     if (target !== longPressDropTarget) {
       document.querySelectorAll('.longpress-over').forEach(el => el.classList.remove('longpress-over'));
@@ -649,8 +672,20 @@ function tileEl(tile, position) {
   item.onclick = event => { event.stopPropagation(); if (Date.now() < suppressTileClickUntil) return; if (!lockedInitialField) selectTile(position); };
   item.ondragstart = event => {
     if (lockedInitialField) { event.preventDefault(); return; }
-    selected = position;
+    selected = JSON.parse(JSON.stringify(position));
+    item.classList.add('native-drag-source');
+    const ghost = item.cloneNode(true);
+    ghost.classList.remove('selected', 'locked', 'native-drag-source');
+    ghost.classList.add('native-drag-image');
+    document.body.appendChild(ghost);
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', tile.id);
+      event.dataTransfer.setDragImage(ghost, ghost.offsetWidth / 2, ghost.offsetHeight / 2);
+    }
+    setTimeout(() => ghost.remove(), 0);
   };
+  item.ondragend = () => item.classList.remove('native-drag-source');
   bindLongPressMove(item, position, lockedInitialField);
   item.ondblclick = event => {
     event.stopPropagation();
@@ -770,8 +805,8 @@ holdZone.onclick = event => { if (event.target === holdZone || event.target.id =
 $('#undoBtn').onclick = () => { if (historyIndex > 0) { historyIndex -= 1; draft = cloneDraft(history[historyIndex]); draft.baseVersion = state.version; selected = null; syncLocalHandOrderFromDraft(); renderDraft(); } };
 $('#redoBtn').onclick = () => { if (historyIndex < history.length - 1) { historyIndex += 1; draft = cloneDraft(history[historyIndex]); draft.baseVersion = state.version; selected = null; syncLocalHandOrderFromDraft(); renderDraft(); } };
 $('#resetDraftBtn').onclick = () => { initDraft(); draft.baseVersion = state.version; renderDraft(); };
-$('#confirmBtn').onclick = () => {
-  if (!isMyTurn()) return;
+async function confirmCurrentDraft() {
+  if (!isMyTurn() || confirmPending) return;
   if ((draft.hold?.length || 0) > 0) { msg('保留置き場のタイルをすべて場へ戻してから確定してください。', true); return; }
 
   let fieldPayload = draft.field
@@ -793,8 +828,19 @@ $('#confirmBtn').onclick = () => {
     fieldPayload = [...originalField, ...newSets];
   }
 
-  send('confirm', { field: fieldPayload, hand: draft.hand.map(tile => tile.id) });
-};
+  confirmPending = true;
+  $('#confirmBtn').disabled = true;
+  msg('確定中…');
+  send('confirm', { field: fieldPayload, hand: draft.hand.map(tile => tile.id), actionId: newActionId('confirm') });
+  // WebSocket state/error responseで通常すぐ解除される。通信断などでも操作不能にしない。
+  setTimeout(() => {
+    if (confirmPending) {
+      confirmPending = false;
+      updateTurnUI();
+    }
+  }, 1800);
+}
+$('#confirmBtn').addEventListener('click', event => { event.preventDefault(); confirmCurrentDraft(); });
 $('#drawBtn').onclick = () => { if (isMyTurn()) send('draw'); };
 $$('[data-sort]').forEach(button => button.onclick = () => sortHand(button.dataset.sort));
 
@@ -813,7 +859,8 @@ function isMyTurn() {
 
 function updateTurnUI() {
   const mine = isMyTurn();
-  ['undoBtn', 'redoBtn', 'resetDraftBtn', 'confirmBtn', 'drawBtn'].forEach(id => { $('#' + id).disabled = !mine; });
+  ['undoBtn', 'redoBtn', 'resetDraftBtn', 'drawBtn'].forEach(id => { $('#' + id).disabled = !mine; });
+  $('#confirmBtn').disabled = !mine || confirmPending;
 }
 
 function validateSet(set) {

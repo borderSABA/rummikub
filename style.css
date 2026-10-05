@@ -104,3 +104,17 @@ main{height:calc(100vh - 50px)}
   .hand{touch-action:pan-x}
   .hand .tile{touch-action:pan-x}
 }
+
+/* v0.2.3 drag feedback */
+.tile-drag-ghost{position:fixed!important;z-index:9999!important;pointer-events:none!important;transform:translate(-50%,-58%) scale(1.08)!important;opacity:.94!important;box-shadow:0 12px 28px #000a,0 0 0 3px #3aa7ff88!important}
+.native-drag-image{position:fixed!important;left:-1000px!important;top:-1000px!important;z-index:9999!important;opacity:.96!important}
+.native-drag-source{opacity:.38!important}
+
+@media(max-width:720px){
+  /* Board -> hold -> controls -> hand */
+  .game-screen.active{grid-template-rows:auto minmax(0,1fr) auto auto auto!important}
+  #holdZone{margin:0 4px;border-radius:7px;min-height:44px;max-height:52px;overflow-x:auto;overflow-y:hidden}
+  #draftTools{order:3;flex:0 0 auto}
+  .hand-area{order:4;flex:0 0 auto}
+  .game-screen>.message{order:5}
+}
