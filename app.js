@@ -23,6 +23,8 @@ let actionSeq = 0;
 let commonNameSavedForSession = null;
 let lastTurnPopupKey = null;
 let turnPopupTimer = null;
+let lastHandledDrawLogKey = null;
+let drawPopupTimer = null;
 let localHandOrder = [];
 let handOrderSessionId = null;
 let handSortMode = 'free';
@@ -234,6 +236,7 @@ function openWS(token = getOrCreateToken(roomId)) {
       state = message.state;
       onRoomStateReceived(state);
       renderState();
+      maybeShowDrawPopup();
     }
   };
 
@@ -316,13 +319,21 @@ function renderLobby() {
   $('#lobbyRoomTitle').textContent = `ROOM ${roomNo}`;
   const box = $('#lobbyPlayers');
   box.innerHTML = '';
+  const me = state.players.find(player => player.id === myId);
   state.players.forEach(player => {
     const item = document.createElement('div');
     item.className = 'player-slot' + (player.host ? ' host' : '');
     item.innerHTML = `<b>${esc(player.name)}</b>${player.host ? '<span class="host-badge">HOST</span>' : ''}<div>${player.cpu ? `CPU Lv${player.cpuLevel}` : 'PLAYER'}</div>`;
+    if (player.cpu && me?.host) {
+      const remove = document.createElement('button');
+      remove.className = 'cpu-remove-btn';
+      remove.textContent = '削除';
+      remove.dataset.cpuId = player.id;
+      remove.onclick = () => send('removeCpu', { cpuId: player.id, actionId: newActionId('cpu-remove') });
+      item.appendChild(remove);
+    }
     box.appendChild(item);
   });
-  const me = state.players.find(player => player.id === myId);
   $('#hostControls').classList.toggle('hidden', !me?.host);
   $('#turnSeconds').value = state.settings.turnSeconds;
   $('#cpuLevel').value = state.settings.cpuLevel || 2;
@@ -336,6 +347,7 @@ function leaveRoomFromUi() {
   try { ws?.close(); } catch {}
   ws = null;
   state = null;
+  lastHandledDrawLogKey = null;
   draft = null;
   myId = null;
   localStorage.removeItem(ACTIVE_ROOM_KEY);
@@ -484,6 +496,8 @@ function renderGame() {
   state.players.forEach((player, index) => {
     const item = document.createElement('div');
     item.className = 'player-chip' + (index === state.turnIndex ? ' turn' : '');
+    item.dataset.playerId = player.id;
+    item.dataset.playerName = player.name;
     item.innerHTML = `<div class="name">${esc(player.name)}${player.host ? ' ★' : ''}</div><div class="sub">${player.cpu ? 'CPU / ' : ''}${player.handCount}枚${player.initialDone ? ' / 30点達成' : ' / 初回30点未達'}</div>`;
     $('#playersBar').appendChild(item);
   });
@@ -494,6 +508,47 @@ function renderGame() {
   renderDraft();
   updateTurnUI();
   startTimer();
+}
+
+function latestDrawLogKey(log) {
+  if (!log || !['draw', 'timeout'].includes(log.action)) return '';
+  return [log.action, log.playerName || '', log.at || '', log.drawCount || 1].join('|');
+}
+
+function maybeShowDrawPopup() {
+  if (!state || state.phase === 'lobby') return;
+  const log = state.lastTurnLog;
+  const key = latestDrawLogKey(log);
+  if (lastHandledDrawLogKey === null) {
+    // Joining/reconnecting mid-game should not replay an old popup.
+    lastHandledDrawLogKey = key;
+    return;
+  }
+  if (!key || key === lastHandledDrawLogKey) return;
+  lastHandledDrawLogKey = key;
+
+  const player = state.players.find(p => (log.playerId && p.id === log.playerId) || (!log.playerId && p.name === log.playerName));
+  const chip = player
+    ? document.querySelector(`.player-chip[data-player-id="${CSS.escape(player.id)}"]`)
+    : [...document.querySelectorAll('.player-chip')].find(el => el.dataset.playerName === log.playerName);
+  if (!chip) return;
+
+  chip.querySelector('.draw-count-pop')?.remove();
+  const pop = document.createElement('div');
+  const penalty = log.action === 'timeout' && Number(log.drawCount) >= 3;
+  pop.className = 'draw-count-pop' + (penalty ? ' penalty' : '');
+  if (penalty) {
+    pop.innerHTML = '<span>ペナルティ</span><strong>+3枚</strong>';
+  } else {
+    pop.innerHTML = '<strong>+1枚</strong>';
+  }
+  chip.appendChild(pop);
+  requestAnimationFrame(() => pop.classList.add('show'));
+  clearTimeout(drawPopupTimer);
+  drawPopupTimer = setTimeout(() => {
+    pop.classList.remove('show');
+    setTimeout(() => pop.remove(), 220);
+  }, 1800);
 }
 
 function tileLogLabel(tile) {
