@@ -538,16 +538,26 @@ function maybeShowDrawPopup() {
     : [...document.querySelectorAll('.player-chip')].find(el => el.dataset.playerName === log.playerName);
   if (!chip) return;
 
-  chip.querySelector('.draw-count-pop')?.remove();
+  document.querySelectorAll('.draw-count-pop.global-pop').forEach(el => el.remove());
   const pop = document.createElement('div');
   const penalty = log.action === 'timeout' && Number(log.drawCount) >= 3;
-  pop.className = 'draw-count-pop' + (penalty ? ' penalty' : '');
+  pop.className = 'draw-count-pop global-pop' + (penalty ? ' penalty' : '');
   if (penalty) {
     pop.innerHTML = '<span>ペナルティ</span><strong>+3枚</strong>';
   } else {
     pop.innerHTML = '<strong>+1枚</strong>';
   }
-  chip.appendChild(pop);
+
+  // Keep the popup outside the player bar so it can never be clipped by
+  // the board/top bar layout. Position it from the player's current chip.
+  document.body.appendChild(pop);
+  const rect = chip.getBoundingClientRect();
+  const popWidth = pop.offsetWidth || 72;
+  const left = Math.max(6, Math.min(window.innerWidth - popWidth - 6, rect.left + rect.width / 2 - popWidth / 2));
+  const top = Math.max(52, Math.min(window.innerHeight - 72, rect.bottom + 6));
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+
   requestAnimationFrame(() => pop.classList.add('show'));
   clearTimeout(drawPopupTimer);
   drawPopupTimer = setTimeout(() => {
