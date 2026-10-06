@@ -17,6 +17,8 @@ let history = [];
 let historyIndex = -1;
 let selected = null;
 let timerHandle = null;
+let serverClockOffsetMs = 0;
+let timeoutResolveSentDeadline = null;
 let reconnectTimer = null;
 let reconnectWanted = false;
 let actionSeq = 0;
@@ -234,6 +236,9 @@ function openWS(token = getOrCreateToken(roomId)) {
     if (message.type === 'welcome') myId = message.playerId;
     if (message.type === 'state') {
       state = message.state;
+      if (Number.isFinite(Number(state?.serverNow))) {
+        serverClockOffsetMs = Number(state.serverNow) - Date.now();
+      }
       onRoomStateReceived(state);
       renderState();
       maybeShowDrawPopup();
@@ -860,18 +865,12 @@ holdZone.onclick = event => { if (event.target === holdZone || event.target.id =
 $('#undoBtn').onclick = () => { if (historyIndex > 0) { historyIndex -= 1; draft = cloneDraft(history[historyIndex]); draft.baseVersion = state.version; selected = null; syncLocalHandOrderFromDraft(); renderDraft(); } };
 $('#redoBtn').onclick = () => { if (historyIndex < history.length - 1) { historyIndex += 1; draft = cloneDraft(history[historyIndex]); draft.baseVersion = state.version; selected = null; syncLocalHandOrderFromDraft(); renderDraft(); } };
 $('#resetDraftBtn').onclick = () => { initDraft(); draft.baseVersion = state.version; renderDraft(); };
-async function confirmCurrentDraft() {
-  if (!isMyTurn() || confirmPending) return;
-  if ((draft.hold?.length || 0) > 0) { msg('保留置き場のタイルをすべて場へ戻してから確定してください。', true); return; }
-
+function buildConfirmPayload() {
   let fieldPayload = draft.field
     .filter(set => set.length)
     .map(set => set.map(tile => tile.id));
 
   // 初回30点前は、既存盤面をクライアント編集結果から再構築しない。
-  // サーバーから受信した既存盤面をそのまま固定し、今回手札から出した
-  // タイルだけで構成された新規セットを追加して送る。これにより、
-  // 新規セットへタイルを追加しただけで既存盤面の組み換えと誤判定されない。
   if (!myInitialDone()) {
     const currentHandIds = new Set(draft.hand.map(tile => tile.id));
     const originalHand = state.players.find(player => player.id === myId)?.hand || [];
@@ -883,10 +882,21 @@ async function confirmCurrentDraft() {
     fieldPayload = [...originalField, ...newSets];
   }
 
+  return {
+    field: fieldPayload,
+    hand: draft.hand.map(tile => tile.id)
+  };
+}
+
+async function confirmCurrentDraft() {
+  if (!isMyTurn() || confirmPending) return;
+  if ((draft.hold?.length || 0) > 0) { msg('保留置き場のタイルをすべて場へ戻してから確定してください。', true); return; }
+
+  const payload = buildConfirmPayload();
   confirmPending = true;
   $('#confirmBtn').disabled = true;
   msg('確定中…');
-  send('confirm', { field: fieldPayload, hand: draft.hand.map(tile => tile.id), actionId: newActionId('confirm') });
+  send('confirm', { ...payload, actionId: newActionId('confirm') });
   // WebSocket state/error responseで通常すぐ解除される。通信断などでも操作不能にしない。
   setTimeout(() => {
     if (confirmPending) {
@@ -995,12 +1005,31 @@ function startTimer() {
   const tick = () => {
     const el = $('#topTimer');
     if (!el) return;
-    if (!state?.deadline) { el.textContent = ''; return; }
-    const seconds = Math.max(0, Math.ceil((state.deadline - Date.now()) / 1000));
+    if (!state?.deadline) {
+      el.textContent = '';
+      timeoutResolveSentDeadline = null;
+      return;
+    }
+    const deadline = Number(state.deadline);
+    const serverNow = Date.now() + serverClockOffsetMs;
+    const remainingMs = deadline - serverNow;
+    const seconds = Math.max(0, Math.ceil(remainingMs / 1000));
     el.textContent = `残り ${seconds}秒`;
+
+    // 0秒到達時は現在の盤面をサーバーへ送り、
+    // 確定可能なら自動確定、不可ならサーバー側でペナルティ処理する。
+    if (remainingMs <= 0 && isMyTurn() && draft && timeoutResolveSentDeadline !== deadline) {
+      timeoutResolveSentDeadline = deadline;
+      const payload = buildConfirmPayload();
+      send('timeoutConfirm', {
+        ...payload,
+        holdCount: (draft.hold || []).length,
+        actionId: newActionId('timeout-confirm')
+      });
+    }
   };
   tick();
-  timerHandle = setInterval(tick, 500);
+  timerHandle = setInterval(tick, 200);
 }
 
 function renderResult() {
