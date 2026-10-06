@@ -579,11 +579,12 @@ function tileLogLabel(tile) {
 
 function turnLogText(log) {
   if (!log) return '';
-  if (log.action === 'draw') return `${Number(log.drawCount) || 1}枚引いた`;
-  if (log.action === 'timeout') return `時間切れ（${Number(log.drawCount) || 0}枚引いた）`;
-  if (log.action === 'pass') return log.reason === 'timeout-pool-empty' ? '時間切れ・パス（山札0枚）' : 'パス（山札0枚）';
+  const poolText = Number.isFinite(Number(log.poolCount)) ? ` / 山札残り${Number(log.poolCount)}枚` : '';
+  if (log.action === 'draw') return `${Number(log.drawCount) || 1}枚引いた${poolText}`;
+  if (log.action === 'timeout') return `時間切れ（${Number(log.drawCount) || 0}枚引いた）${poolText}`;
+  if (log.action === 'pass') return `${log.reason === 'timeout-pool-empty' ? '時間切れ・パス' : 'パス'}${poolText || ' / 山札残り0枚'}`;
   const labels = (log.tiles || []).map(tileLogLabel).filter(Boolean);
-  return labels.length ? labels.join('・') : '場を組み替えた';
+  return `${labels.length ? labels.join('・') : '場を組み替えた'}${poolText}`;
 }
 
 function renderTurnLogs() {
