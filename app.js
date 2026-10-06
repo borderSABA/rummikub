@@ -517,7 +517,9 @@ function renderGame() {
 
 function latestDrawLogKey(log) {
   if (!log || !['draw', 'timeout'].includes(log.action)) return '';
-  return [log.action, log.playerName || '', log.at || '', log.drawCount || 1].join('|');
+  const count = Number(log.drawCount) || 0;
+  if (count <= 0) return '';
+  return [log.action, log.playerName || '', log.at || '', count].join('|');
 }
 
 function maybeShowDrawPopup() {
@@ -540,12 +542,14 @@ function maybeShowDrawPopup() {
 
   document.querySelectorAll('.draw-count-pop.global-pop').forEach(el => el.remove());
   const pop = document.createElement('div');
-  const penalty = log.action === 'timeout' && Number(log.drawCount) >= 3;
+  const drawCount = Math.max(0, Number(log.drawCount) || 0);
+  if (!drawCount) return;
+  const penalty = log.action === 'timeout' && Number(log.requestedDrawCount || log.drawCount) >= 3;
   pop.className = 'draw-count-pop global-pop' + (penalty ? ' penalty' : '');
   if (penalty) {
-    pop.innerHTML = '<span>ペナルティ</span><strong>+3枚</strong>';
+    pop.innerHTML = `<span>ペナルティ</span><strong>+${drawCount}枚</strong>`;
   } else {
-    pop.innerHTML = '<strong>+1枚</strong>';
+    pop.innerHTML = `<strong>+${drawCount}枚</strong>`;
   }
 
   // Keep the popup outside the player bar so it can never be clipped by
@@ -575,8 +579,9 @@ function tileLogLabel(tile) {
 
 function turnLogText(log) {
   if (!log) return '';
-  if (log.action === 'draw') return '1枚引いた';
-  if (log.action === 'timeout') return `時間切れ（${log.drawCount || 1}枚引いた）`;
+  if (log.action === 'draw') return `${Number(log.drawCount) || 1}枚引いた`;
+  if (log.action === 'timeout') return `時間切れ（${Number(log.drawCount) || 0}枚引いた）`;
+  if (log.action === 'pass') return log.reason === 'timeout-pool-empty' ? '時間切れ・パス（山札0枚）' : 'パス（山札0枚）';
   const labels = (log.tiles || []).map(tileLogLabel).filter(Boolean);
   return labels.length ? labels.join('・') : '場を組み替えた';
 }
@@ -935,6 +940,8 @@ function isMyTurn() {
 function updateTurnUI() {
   const mine = isMyTurn();
   ['undoBtn', 'redoBtn', 'resetDraftBtn', 'drawBtn'].forEach(id => { $('#' + id).disabled = !mine; });
+  const drawBtn = $('#drawBtn');
+  if (drawBtn) drawBtn.textContent = Number(state?.poolCount) > 0 ? '1枚引く' : 'パス';
   $('#confirmBtn').disabled = !mine || confirmPending;
 }
 
